@@ -102,14 +102,14 @@ class EMSegmentationDataset(Dataset):
     Samples random 256x256 patches from loaded volumes with augmentation.
     """
     def __init__(self, volume_img, volume_nuclei, volume_mito,
-                 z_start, z_end, patches_per_epoch=1000, augment=True):
+                 is_validation=False, patches_per_epoch=1000, augment=True):
         """
         Args:
             volume_img: Image volume (X, Y, Z) as uint8
             volume_nuclei: Nuclei mask volume (X, Y, Z) as uint8
             volume_mito: Mito mask volume (X, Y, Z) as uint8
-            z_start: Start Z slice (inclusive)
-            z_end: End Z slice (exclusive)
+            is_validation: If True, sample from validation region (top-right quadrant);
+                          if False, sample from training region (other 3/4 of XY)
             patches_per_epoch: Number of random patches to sample per epoch
             augment: Whether to apply data augmentation
         """
@@ -117,17 +117,22 @@ class EMSegmentationDataset(Dataset):
         self.volume_nuclei = volume_nuclei
         self.volume_mito = volume_mito
 
-        self.z_start = z_start
-        self.z_end = z_end
+        self.is_validation = is_validation
         self.patches_per_epoch = patches_per_epoch
         self.augment = augment
 
         # Get volume dimensions
         self.vol_x, self.vol_y, self.vol_z = volume_img.shape
 
+        # Calculate midpoints for XY split
+        self.mid_x = self.vol_x // 2
+        self.mid_y = self.vol_y // 2
+
         print(f"Dataset initialized:")
         print(f"  Volume shape: {self.vol_x} x {self.vol_y} x {self.vol_z}")
-        print(f"  Z range: {z_start} to {z_end} ({z_end - z_start} slices)")
+        print(f"  Midpoint: X={self.mid_x}, Y={self.mid_y}")
+        print(f"  Mode: {'VALIDATION' if is_validation else 'TRAINING'}")
+        print(f"  Region: {'X > {}, Y > {} (top-right quadrant, ~1/4 of area)'.format(self.mid_x, self.mid_y) if is_validation else 'Other 3/4 of XY area'}")
         print(f"  Patches per epoch: {patches_per_epoch}")
         print(f"  Augmentation: {augment}")
 
@@ -143,14 +148,34 @@ class EMSegmentationDataset(Dataset):
                 - image: (1, 256, 256) float32 tensor, normalized to [0, 1]
                 - target: (2, 256, 256) float32 tensor, nuclei and mito masks
         """
-        # Random Z position within allowed range
-        z = random.randint(self.z_start, self.z_end - 1)
+        # Random Z position (use all Z slices)
+        z = random.randint(0, self.vol_z - 1)
 
-        # Random X, Y position ensuring we stay in bounds
+        # Random X, Y position based on train/validation split
         max_x = self.vol_x - SLICE_SIZE
         max_y = self.vol_y - SLICE_SIZE
-        x = random.randint(0, max_x)
-        y = random.randint(0, max_y)
+
+        if self.is_validation:
+            # Validation: sample where X > mid_x AND Y > mid_y (top-right quadrant)
+            x = random.randint(self.mid_x, max_x)
+            y = random.randint(self.mid_y, max_y)
+        else:
+            # Training: sample where X <= mid_x OR Y <= mid_y (other 3/4 of area)
+            # We need to avoid the validation quadrant
+            # Strategy: randomly choose one of the 3 training quadrants
+            quadrant = random.randint(0, 2)
+            if quadrant == 0:
+                # Bottom-left: X <= mid_x, Y <= mid_y
+                x = random.randint(0, self.mid_x)
+                y = random.randint(0, self.mid_y)
+            elif quadrant == 1:
+                # Top-left: X <= mid_x, Y > mid_y
+                x = random.randint(0, self.mid_x)
+                y = random.randint(self.mid_y, max_y)
+            else:
+                # Bottom-right: X > mid_x, Y <= mid_y
+                x = random.randint(self.mid_x, max_x)
+                y = random.randint(0, self.mid_y)
 
         # Extract slices
         img_slice = self.volume_img[x:x+SLICE_SIZE, y:y+SLICE_SIZE, z].copy()
@@ -238,20 +263,38 @@ if __name__ == "__main__":
     # Load volumes
     volume_img, volume_nuclei, volume_mito = load_volumes(mip=0)
 
-    # Create train dataset (Z 800-879)
+    # Create train dataset (3/4 of XY area)
     train_dataset = EMSegmentationDataset(
         volume_img, volume_nuclei, volume_mito,
-        z_start=0, z_end=80,  # Relative to loaded volume
+        is_validation=False,
         patches_per_epoch=10,
         augment=True
     )
 
-    print(f"\nDataset length: {len(train_dataset)}")
+    # Create validation dataset (1/4 of XY area - top-right quadrant)
+    val_dataset = EMSegmentationDataset(
+        volume_img, volume_nuclei, volume_mito,
+        is_validation=True,
+        patches_per_epoch=10,
+        augment=False
+    )
 
-    # Sample a few patches
-    print("\nSampling patches...")
+    print(f"\nTrain dataset length: {len(train_dataset)}")
+    print(f"Val dataset length: {len(val_dataset)}")
+
+    # Sample a few patches from training
+    print("\nSampling TRAINING patches...")
     for i in range(3):
         img, target = train_dataset[i]
+        print(f"Sample {i}:")
+        print(f"  Image shape: {img.shape}, dtype: {img.dtype}, range: [{img.min():.3f}, {img.max():.3f}]")
+        print(f"  Target shape: {target.shape}, dtype: {target.dtype}")
+        print(f"  Nuclei pixels: {target[0].sum():.0f}, Mito pixels: {target[1].sum():.0f}")
+
+    # Sample a few patches from validation
+    print("\nSampling VALIDATION patches...")
+    for i in range(3):
+        img, target = val_dataset[i]
         print(f"Sample {i}:")
         print(f"  Image shape: {img.shape}, dtype: {img.dtype}, range: [{img.min():.3f}, {img.max():.3f}]")
         print(f"  Target shape: {target.shape}, dtype: {target.dtype}")

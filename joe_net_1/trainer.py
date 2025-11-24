@@ -31,8 +31,17 @@ class TrainingCallbacks:
         """Called at start of each epoch"""
         pass
 
-    def on_batch_end(self, epoch, batch_idx, total_batches, loss):
-        """Called after each training batch"""
+    def on_batch_end(self, epoch, batch_idx, total_batches, loss, loss_components=None, pred_probs=None):
+        """Called after each training batch
+
+        Args:
+            epoch: Current epoch
+            batch_idx: Current batch index
+            total_batches: Total batches in epoch
+            loss: Total loss value
+            loss_components: Optional dict with BCE/Dice per channel
+            pred_probs: Optional prediction probabilities for histograms
+        """
         pass
 
     def on_epoch_end(self, epoch, train_loss, val_loss=None, metrics=None):
@@ -117,16 +126,18 @@ class Trainer:
         volume_img, volume_nuclei, volume_mito = volumes
 
         # Create datasets
+        # Training set: 3/4 of XY area (all quadrants except top-right)
         self.train_dataset = EMSegmentationDataset(
             volume_img, volume_nuclei, volume_mito,
-            z_start=0, z_end=80,  # Z slices 800-879
+            is_validation=False,
             patches_per_epoch=config.patches_per_epoch,
             augment=True
         )
 
+        # Validation set: 1/4 of XY area (top-right quadrant: X > mid_x, Y > mid_y)
         self.val_dataset = EMSegmentationDataset(
             volume_img, volume_nuclei, volume_mito,
-            z_start=80, z_end=100,  # Z slices 880-899
+            is_validation=True,
             patches_per_epoch=200,
             augment=False
         )
@@ -205,7 +216,8 @@ class Trainer:
             if self.config.use_amp:
                 with autocast():
                     outputs = self.model(images)
-                    loss = self.criterion(outputs, targets)
+                    loss_dict = self.criterion(outputs, targets, return_components=True)
+                    loss = loss_dict['loss']
 
                 # Backward pass with gradient scaling
                 self.scaler.scale(loss).backward()
@@ -213,16 +225,25 @@ class Trainer:
                 self.scaler.update()
             else:
                 outputs = self.model(images)
-                loss = self.criterion(outputs, targets)
+                loss_dict = self.criterion(outputs, targets, return_components=True)
+                loss = loss_dict['loss']
                 loss.backward()
                 self.optimizer.step()
 
             total_loss += loss.item()
             num_batches += 1
 
-            # Callback for batch end
+            # Callback for batch end (with loss components and predictions for histograms)
             if self.callbacks:
-                self.callbacks.on_batch_end(epoch, batch_idx, len(self.train_loader), loss.item())
+                # Get prediction probabilities for confidence histograms
+                with torch.no_grad():
+                    pred_probs = torch.sigmoid(outputs)
+
+                self.callbacks.on_batch_end(
+                    epoch, batch_idx, len(self.train_loader), loss.item(),
+                    loss_components=loss_dict,
+                    pred_probs=pred_probs
+                )
 
         avg_loss = total_loss / num_batches
         return avg_loss

@@ -14,6 +14,7 @@ import numpy as np
 import random
 import threading
 import torch
+import time
 
 # Import training components
 from trainer import Trainer, TrainerConfig, TrainingCallbacks
@@ -94,6 +95,7 @@ class TrainingPanel(wx.Panel):
         self.trainer = None
         self.training_thread = None
         self.is_training = False
+        self.training_start_time = None
 
         # Data for plotting
         self.epochs = []
@@ -105,6 +107,16 @@ class TrainingPanel(wx.Panel):
         # Batch-level data for live updates
         self.batch_losses = []  # List of (batch_number, loss) tuples
         self.batch_counter = 0  # Global batch counter across all epochs
+
+        # Loss components data (batch-level)
+        self.bce_nuclei_losses = []  # List of (batch_number, loss) tuples
+        self.bce_mito_losses = []
+        self.dice_nuclei_losses = []
+        self.dice_mito_losses = []
+
+        # Histogram data (10 bins each: 0-0.1, 0.1-0.2, ..., 0.9-1.0)
+        self.nuclei_hist_bins = [0] * 10
+        self.mito_hist_bins = [0] * 10
 
         # Create UI
         self.create_ui()
@@ -147,21 +159,64 @@ class TrainingPanel(wx.Panel):
 
         main_sizer.Add(top_sizer, 0, wx.ALL | wx.EXPAND, 5)
 
-        # Middle section: IoU Metrics (left) and Predictions (right)
+        # Middle section: Left half (3 rows of graphs) and Right half (Predictions)
         middle_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
-        # Left: IoU Metrics
+        # Left half: Three rows of graphs
+        left_half_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # Row 1: IoU Metrics
         metrics_box = wx.StaticBox(self, label="IoU Metrics")
         metrics_box_sizer = wx.StaticBoxSizer(metrics_box, wx.VERTICAL)
 
-        self.metrics_canvas = wxplot.PlotCanvas(self, size=(600, 400))
+        self.metrics_canvas = wxplot.PlotCanvas(self, size=(700, 250))
         self.metrics_canvas.SetEnableLegend(True)
         self.metrics_canvas.SetEnableGrid(True)
         metrics_box_sizer.Add(self.metrics_canvas, 1, wx.EXPAND | wx.ALL, 5)
 
-        middle_sizer.Add(metrics_box_sizer, 0, wx.ALL, 5)
+        left_half_sizer.Add(metrics_box_sizer, 0, wx.ALL | wx.EXPAND, 5)
 
-        # Right: Predictions
+        # Row 2: Loss Components (including total loss)
+        loss_comp_box = wx.StaticBox(self, label="Loss Components (BCE, Dice, Total)")
+        loss_comp_box_sizer = wx.StaticBoxSizer(loss_comp_box, wx.VERTICAL)
+
+        self.loss_comp_canvas = wxplot.PlotCanvas(self, size=(700, 250))
+        self.loss_comp_canvas.SetEnableLegend(True)
+        self.loss_comp_canvas.SetEnableGrid(True)
+        loss_comp_box_sizer.Add(self.loss_comp_canvas, 1, wx.EXPAND | wx.ALL, 5)
+
+        left_half_sizer.Add(loss_comp_box_sizer, 0, wx.ALL | wx.EXPAND, 5)
+
+        # Row 3: Both histograms side-by-side
+        hist_row_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        # Nuclei histogram
+        nuclei_hist_box = wx.StaticBox(self, label="Nuclei Confidence")
+        nuclei_hist_box_sizer = wx.StaticBoxSizer(nuclei_hist_box, wx.VERTICAL)
+
+        self.nuclei_hist_canvas = wxplot.PlotCanvas(self, size=(340, 200))
+        self.nuclei_hist_canvas.SetEnableLegend(False)
+        self.nuclei_hist_canvas.SetEnableGrid(True)
+        nuclei_hist_box_sizer.Add(self.nuclei_hist_canvas, 1, wx.EXPAND | wx.ALL, 5)
+
+        hist_row_sizer.Add(nuclei_hist_box_sizer, 1, wx.ALL | wx.EXPAND, 5)
+
+        # Mito histogram
+        mito_hist_box = wx.StaticBox(self, label="Mito Confidence")
+        mito_hist_box_sizer = wx.StaticBoxSizer(mito_hist_box, wx.VERTICAL)
+
+        self.mito_hist_canvas = wxplot.PlotCanvas(self, size=(340, 200))
+        self.mito_hist_canvas.SetEnableLegend(False)
+        self.mito_hist_canvas.SetEnableGrid(True)
+        mito_hist_box_sizer.Add(self.mito_hist_canvas, 1, wx.EXPAND | wx.ALL, 5)
+
+        hist_row_sizer.Add(mito_hist_box_sizer, 1, wx.ALL | wx.EXPAND, 5)
+
+        left_half_sizer.Add(hist_row_sizer, 0, wx.ALL | wx.EXPAND, 5)
+
+        middle_sizer.Add(left_half_sizer, 0, wx.ALL, 5)
+
+        # Right half: Predictions (three rows)
         pred_box = wx.StaticBox(self, label="Predictions (Input | Ground Truth | Prediction)")
         pred_box_sizer = wx.StaticBoxSizer(pred_box, wx.VERTICAL)
 
@@ -175,17 +230,6 @@ class TrainingPanel(wx.Panel):
         middle_sizer.Add(pred_box_sizer, 0, wx.ALL, 5)
 
         main_sizer.Add(middle_sizer, 0, wx.ALL | wx.EXPAND, 5)
-
-        # Bottom section: Loss graph (wide)
-        loss_box = wx.StaticBox(self, label="Training Loss (Live)")
-        loss_box_sizer = wx.StaticBoxSizer(loss_box, wx.VERTICAL)
-
-        self.loss_canvas = wxplot.PlotCanvas(self, size=(1500, 250))
-        self.loss_canvas.SetEnableLegend(True)
-        self.loss_canvas.SetEnableGrid(True)
-        loss_box_sizer.Add(self.loss_canvas, 1, wx.EXPAND | wx.ALL, 5)
-
-        main_sizer.Add(loss_box_sizer, 0, wx.ALL | wx.EXPAND, 5)
 
         self.SetSizer(main_sizer)
 
@@ -227,6 +271,16 @@ class TrainingPanel(wx.Panel):
         self.batch_losses = []
         self.batch_counter = 0
 
+        # Reset loss components data
+        self.bce_nuclei_losses = []
+        self.bce_mito_losses = []
+        self.dice_nuclei_losses = []
+        self.dice_mito_losses = []
+
+        # Reset histogram data
+        self.nuclei_hist_bins = [0] * 10
+        self.mito_hist_bins = [0] * 10
+
         # Start training in background thread
         self.is_training = True
         self.stop_button.Enable(True)
@@ -236,6 +290,8 @@ class TrainingPanel(wx.Panel):
 
     def run_training(self):
         """Run training (called in background thread)"""
+        # Record start time
+        self.training_start_time = time.time()
         try:
             self.trainer.train()
         except Exception as e:
@@ -250,10 +306,29 @@ class TrainingPanel(wx.Panel):
 
     def on_training_complete(self):
         """Training finished"""
+        # Calculate elapsed time
+        elapsed_seconds = time.time() - self.training_start_time if self.training_start_time else 0
+
+        # Format elapsed time nicely
+        hours = int(elapsed_seconds // 3600)
+        minutes = int((elapsed_seconds % 3600) // 60)
+        seconds = int(elapsed_seconds % 60)
+
+        if hours > 0:
+            time_str = f"{hours}h {minutes}m {seconds}s"
+        elif minutes > 0:
+            time_str = f"{minutes}m {seconds}s"
+        else:
+            time_str = f"{seconds}s"
+
+        # Print to console
+        print(f"\nTraining complete! Total time: {time_str}")
+
+        # Update UI
         self.is_training = False
         self.start_button.Enable(True)
         self.stop_button.Enable(False)
-        self.status_text.SetLabel("Training complete!")
+        self.status_text.SetLabel(f"Training complete! Total time: {time_str}")
 
     def update_status(self, status):
         """Update status text (thread-safe)"""
@@ -389,6 +464,121 @@ class TrainingPanel(wx.Panel):
                 pil_img = visualize_prediction(img, target, pred)
                 self.pred_panels[i].update_image(pil_img)
 
+    def add_loss_components(self, loss_dict):
+        """Add loss components for live updates (thread-safe)"""
+        wx.CallAfter(self._add_loss_components, loss_dict)
+
+    def _add_loss_components(self, loss_dict):
+        # Add to lists
+        self.bce_nuclei_losses.append((self.batch_counter, loss_dict['bce_nuclei']))
+        self.bce_mito_losses.append((self.batch_counter, loss_dict['bce_mito']))
+        self.dice_nuclei_losses.append((self.batch_counter, loss_dict['dice_nuclei']))
+        self.dice_mito_losses.append((self.batch_counter, loss_dict['dice_mito']))
+
+        # Keep last 500 points
+        if len(self.bce_nuclei_losses) > 500:
+            self.bce_nuclei_losses = self.bce_nuclei_losses[-500:]
+            self.bce_mito_losses = self.bce_mito_losses[-500:]
+            self.dice_nuclei_losses = self.dice_nuclei_losses[-500:]
+            self.dice_mito_losses = self.dice_mito_losses[-500:]
+
+        # Update graph (throttle to every 5 batches)
+        if self.batch_counter % 5 == 0:
+            self._update_loss_components_graph()
+
+    def _update_loss_components_graph(self):
+        """Update the loss components graph including total loss"""
+        lines = []
+
+        if len(self.bce_nuclei_losses) > 0:
+            try:
+                # Total loss (from batch_losses) - thick gray line
+                if len(self.batch_losses) > 0:
+                    total_loss_line = wxplot.PolyLine(self.batch_losses, colour='gray', width=3, legend='Total Loss')
+                    lines.append(total_loss_line)
+
+                # BCE losses (solid lines)
+                bce_nuclei_line = wxplot.PolyLine(self.bce_nuclei_losses, colour='red', width=2, legend='BCE Nuclei')
+                bce_mito_line = wxplot.PolyLine(self.bce_mito_losses, colour='cyan', width=2, legend='BCE Mito')
+                lines.append(bce_nuclei_line)
+                lines.append(bce_mito_line)
+
+                # Dice losses (dotted lines)
+                dice_nuclei_line = wxplot.PolyLine(self.dice_nuclei_losses, colour='red', width=1,
+                                                   legend='Dice Nuclei', style=wx.PENSTYLE_DOT)
+                dice_mito_line = wxplot.PolyLine(self.dice_mito_losses, colour='cyan', width=1,
+                                                 legend='Dice Mito', style=wx.PENSTYLE_DOT)
+                lines.append(dice_nuclei_line)
+                lines.append(dice_mito_line)
+
+                graphics = wxplot.PlotGraphics(lines, 'Loss Components', 'Batch', 'Loss')
+                self.loss_comp_canvas.Draw(graphics)
+            except Exception as e:
+                print(f"ERROR drawing loss components graph: {e}")
+
+    def update_histograms(self, pred_probs):
+        """Update prediction confidence histograms (thread-safe)"""
+        wx.CallAfter(self._update_histograms, pred_probs)
+
+    def _update_histograms(self, pred_probs):
+        """Compute and display histograms from prediction probabilities"""
+        # pred_probs: (B, 2, H, W) - batch of predictions
+        # Extract nuclei (channel 0) and mito (channel 1) predictions
+        nuclei_probs = pred_probs[:, 0].flatten().cpu().numpy()
+        mito_probs = pred_probs[:, 1].flatten().cpu().numpy()
+
+        # Compute histograms (10 bins from 0 to 1)
+        nuclei_counts, _ = np.histogram(nuclei_probs, bins=10, range=(0, 1))
+        mito_counts, _ = np.histogram(mito_probs, bins=10, range=(0, 1))
+
+        # Normalize to percentages
+        nuclei_counts = nuclei_counts / nuclei_counts.sum() * 100
+        mito_counts = mito_counts / mito_counts.sum() * 100
+
+        # Store
+        self.nuclei_hist_bins = nuclei_counts.tolist()
+        self.mito_hist_bins = mito_counts.tolist()
+
+        # Draw nuclei histogram using PolyHistogram
+        try:
+            # Create bin edges for histogram (0.0, 0.1, 0.2, ..., 1.0)
+            bins = np.linspace(0, 1, 11)  # 11 edges for 10 bins
+
+            # Create histogram using PolyHistogram
+            hist = wxplot.PolyHistogram(
+                np.array(self.nuclei_hist_bins),
+                bins,
+                fillcolour=wx.RED,
+                edgecolour=wx.RED,
+                edgewidth=1
+            )
+
+            graphics = wxplot.PlotGraphics([hist], 'Nuclei Confidence', 'Probability', 'Percentage')
+            max_height = max(self.nuclei_hist_bins) if max(self.nuclei_hist_bins) > 0 else 1
+            self.nuclei_hist_canvas.Draw(graphics, xAxis=(0, 1), yAxis=(0, max_height * 1.1))
+        except Exception as e:
+            print(f"ERROR drawing nuclei histogram: {e}")
+
+        # Draw mito histogram using PolyHistogram
+        try:
+            # Create bin edges for histogram (0.0, 0.1, 0.2, ..., 1.0)
+            bins = np.linspace(0, 1, 11)  # 11 edges for 10 bins
+
+            # Create histogram using PolyHistogram
+            hist = wxplot.PolyHistogram(
+                np.array(self.mito_hist_bins),
+                bins,
+                fillcolour=wx.CYAN,
+                edgecolour=wx.CYAN,
+                edgewidth=1
+            )
+
+            graphics = wxplot.PlotGraphics([hist], 'Mito Confidence', 'Probability', 'Percentage')
+            max_height = max(self.mito_hist_bins) if max(self.mito_hist_bins) > 0 else 1
+            self.mito_hist_canvas.Draw(graphics, xAxis=(0, 1), yAxis=(0, max_height * 1.1))
+        except Exception as e:
+            print(f"ERROR drawing mito histogram: {e}")
+
 
 class GUICallbacks(TrainingCallbacks):
     """Callbacks that update the GUI during training"""
@@ -405,16 +595,28 @@ class GUICallbacks(TrainingCallbacks):
         self.panel.update_status(f"Epoch {epoch + 1}/{total_epochs}")
         self.panel.update_progress(epoch, total_epochs)
 
-    def on_batch_end(self, epoch, batch_idx, total_batches, loss):
+    def on_batch_end(self, epoch, batch_idx, total_batches, loss, loss_components=None, pred_probs=None):
         # Add batch loss to live graph
         self.panel.add_batch_loss(loss)
 
+        # Add loss components if provided
+        if loss_components:
+            self.panel.add_loss_components(loss_components)
+
+        # Update histograms if predictions provided
+        if pred_probs is not None:
+            self.panel.update_histograms(pred_probs)
+
         # Update status every n batches
         if batch_idx % 1 == 0:
-            self.panel.update_status(f"Epoch {epoch + 1}, Batch {batch_idx}/{total_batches}, Loss: {loss:.4f}")
+            elapsed_seconds = time.time() - self.panel.training_start_time
+            elapsed_time = ':'.join([str(int(elapsed_seconds/60/60 % 60)), str(int(elapsed_seconds/60 % 60)), str(int(elapsed_seconds%60))])
+            self.panel.update_status(
+              f"Epoch {epoch + 1}, Batch {batch_idx}/{total_batches}, Loss: {loss:.4f}, Time: {elapsed_time}"
+            )
 
         # Update predictions every m batches (not just at validation)
-        if batch_idx % 1 == 0: 
+        if batch_idx % 1 == 0:
             self._update_live_predictions()
 
     def on_epoch_end(self, epoch, train_loss, val_loss=None, metrics=None):
@@ -471,7 +673,7 @@ class MainFrame(wx.Frame):
     """Main application frame with training dashboard"""
 
     def __init__(self):
-        super().__init__(None, title="Joe Net 1 - Training Dashboard", size=(1600, 1200))
+        super().__init__(None, title="Joe Net 1 - Training Dashboard", size=(1600, 1004))
 
         # Create menu bar
         menubar = wx.MenuBar()

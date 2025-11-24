@@ -22,26 +22,48 @@ class CombinedLoss(nn.Module):
         self.dice_weight = dice_weight
         self.bce = nn.BCEWithLogitsLoss()
 
-    def forward(self, logits, targets):
+    def forward(self, logits, targets, return_components=False):
         """
         Args:
             logits: (B, 2, H, W) raw predictions
             targets: (B, 2, H, W) ground truth masks (0 or 1)
+            return_components: If True, return dict with individual components
 
         Returns:
-            Combined loss (scalar)
+            If return_components=False: Combined loss (scalar)
+            If return_components=True: dict with {
+                'loss': total loss,
+                'bce_nuclei': BCE loss for nuclei channel,
+                'bce_mito': BCE loss for mito channel,
+                'dice_nuclei': Dice loss for nuclei channel,
+                'dice_mito': Dice loss for mito channel
+            }
         """
-        # BCE loss
-        bce_loss = self.bce(logits, targets)
+        # BCE loss - per channel
+        bce_nuclei = self.bce(logits[:, 0], targets[:, 0])
+        bce_mito = self.bce(logits[:, 1], targets[:, 1])
+        bce_loss = (bce_nuclei + bce_mito) / 2.0
 
-        # Dice loss (computed per channel then averaged)
-        dice_loss = self.dice_loss(logits, targets)
+        # Dice loss - per channel
+        dice_nuclei, dice_mito = self.dice_loss_per_channel(logits, targets)
+        dice_loss = (dice_nuclei + dice_mito) / 2.0
 
-        return self.bce_weight * bce_loss + self.dice_weight * dice_loss
+        total_loss = self.bce_weight * bce_loss + self.dice_weight * dice_loss
 
-    def dice_loss(self, logits, targets, smooth=1.0):
+        if return_components:
+            return {
+                'loss': total_loss,
+                'bce_nuclei': bce_nuclei.item(),
+                'bce_mito': bce_mito.item(),
+                'dice_nuclei': dice_nuclei.item(),
+                'dice_mito': dice_mito.item()
+            }
+        else:
+            return total_loss
+
+    def dice_loss_per_channel(self, logits, targets, smooth=1.0):
         """
-        Dice loss = 1 - Dice coefficient
+        Dice loss per channel
 
         Args:
             logits: (B, C, H, W) raw predictions
@@ -49,7 +71,7 @@ class CombinedLoss(nn.Module):
             smooth: Smoothing factor to avoid division by zero
 
         Returns:
-            Dice loss (scalar)
+            (dice_nuclei, dice_mito): Tuple of dice losses for each channel
         """
         # Apply sigmoid to get probabilities
         probs = torch.sigmoid(logits)
@@ -65,8 +87,26 @@ class CombinedLoss(nn.Module):
         # Dice coefficient per channel
         dice = (2.0 * intersection + smooth) / (union + smooth)  # (B, C)
 
-        # Average over batch and channels, then convert to loss
-        return 1.0 - dice.mean()
+        # Average over batch for each channel, then convert to loss
+        dice_nuclei = 1.0 - dice[:, 0].mean()
+        dice_mito = 1.0 - dice[:, 1].mean()
+
+        return dice_nuclei, dice_mito
+
+    def dice_loss(self, logits, targets, smooth=1.0):
+        """
+        Dice loss = 1 - Dice coefficient
+
+        Args:
+            logits: (B, C, H, W) raw predictions
+            targets: (B, C, H, W) ground truth masks
+            smooth: Smoothing factor to avoid division by zero
+
+        Returns:
+            Dice loss (scalar)
+        """
+        dice_nuclei, dice_mito = self.dice_loss_per_channel(logits, targets, smooth)
+        return (dice_nuclei + dice_mito) / 2.0
 
 
 def compute_metrics(logits, targets, threshold=0.5):
