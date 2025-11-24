@@ -361,6 +361,9 @@ class Trainer:
         # Try to resume from checkpoint
         start_epoch = self.load_checkpoint('latest')
 
+        # Initialize train_loss in case loop doesn't execute
+        train_loss = 0.0
+
         # Training loop
         for epoch in range(start_epoch, num_epochs):
             self.current_epoch = epoch

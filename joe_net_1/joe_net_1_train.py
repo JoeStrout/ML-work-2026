@@ -108,11 +108,18 @@ class TrainingPanel(wx.Panel):
         self.batch_losses = []  # List of (batch_number, loss) tuples
         self.batch_counter = 0  # Global batch counter across all epochs
 
-        # Loss components data (batch-level)
-        self.bce_nuclei_losses = []  # List of (batch_number, loss) tuples
-        self.bce_mito_losses = []
-        self.dice_nuclei_losses = []
-        self.dice_mito_losses = []
+        # Loss components data (epoch-level, stored per epoch for entire run)
+        self.epoch_bce_nuclei = []
+        self.epoch_bce_mito = []
+        self.epoch_dice_nuclei = []
+        self.epoch_dice_mito = []
+        self.epoch_total_loss = []
+
+        # Accumulators for averaging loss components within an epoch
+        self.current_epoch_bce_nuclei = []
+        self.current_epoch_bce_mito = []
+        self.current_epoch_dice_nuclei = []
+        self.current_epoch_dice_mito = []
 
         # Histogram data (10 bins each: 0-0.1, 0.1-0.2, ..., 0.9-1.0)
         self.nuclei_hist_bins = [0] * 10
@@ -272,10 +279,15 @@ class TrainingPanel(wx.Panel):
         self.batch_counter = 0
 
         # Reset loss components data
-        self.bce_nuclei_losses = []
-        self.bce_mito_losses = []
-        self.dice_nuclei_losses = []
-        self.dice_mito_losses = []
+        self.epoch_bce_nuclei = []
+        self.epoch_bce_mito = []
+        self.epoch_dice_nuclei = []
+        self.epoch_dice_mito = []
+        self.epoch_total_loss = []
+        self.current_epoch_bce_nuclei = []
+        self.current_epoch_bce_mito = []
+        self.current_epoch_dice_nuclei = []
+        self.current_epoch_dice_mito = []
 
         # Reset histogram data
         self.nuclei_hist_bins = [0] * 10
@@ -438,9 +450,9 @@ class TrainingPanel(wx.Panel):
         self.nuclei_ious.append(nuclei_iou)
         self.mito_ious.append(mito_iou)
 
-        # Update metrics graph (use last N validation points)
+        # Update metrics graph (shows entire training run)
         if len(self.nuclei_ious) > 0:
-            # Create x-axis for validation points
+            # Create x-axis for validation epochs (maps to actual epoch numbers)
             num_vals = len(self.nuclei_ious)
             val_epochs = list(range(len(self.epochs) - num_vals, len(self.epochs)))
 
@@ -465,53 +477,71 @@ class TrainingPanel(wx.Panel):
                 self.pred_panels[i].update_image(pil_img)
 
     def add_loss_components(self, loss_dict):
-        """Add loss components for live updates (thread-safe)"""
+        """Accumulate loss components during epoch (thread-safe)"""
         wx.CallAfter(self._add_loss_components, loss_dict)
 
     def _add_loss_components(self, loss_dict):
-        # Add to lists
-        self.bce_nuclei_losses.append((self.batch_counter, loss_dict['bce_nuclei']))
-        self.bce_mito_losses.append((self.batch_counter, loss_dict['bce_mito']))
-        self.dice_nuclei_losses.append((self.batch_counter, loss_dict['dice_nuclei']))
-        self.dice_mito_losses.append((self.batch_counter, loss_dict['dice_mito']))
+        # Accumulate for averaging at epoch end
+        self.current_epoch_bce_nuclei.append(loss_dict['bce_nuclei'])
+        self.current_epoch_bce_mito.append(loss_dict['bce_mito'])
+        self.current_epoch_dice_nuclei.append(loss_dict['dice_nuclei'])
+        self.current_epoch_dice_mito.append(loss_dict['dice_mito'])
 
-        # Keep last 500 points
-        if len(self.bce_nuclei_losses) > 500:
-            self.bce_nuclei_losses = self.bce_nuclei_losses[-500:]
-            self.bce_mito_losses = self.bce_mito_losses[-500:]
-            self.dice_nuclei_losses = self.dice_nuclei_losses[-500:]
-            self.dice_mito_losses = self.dice_mito_losses[-500:]
+    def finalize_epoch_loss_components(self, epoch, train_loss):
+        """Finalize loss components at epoch end (thread-safe)"""
+        wx.CallAfter(self._finalize_epoch_loss_components, epoch, train_loss)
 
-        # Update graph (throttle to every 5 batches)
-        if self.batch_counter % 5 == 0:
+    def _finalize_epoch_loss_components(self, epoch, train_loss):
+        # Average the accumulated values for this epoch
+        if len(self.current_epoch_bce_nuclei) > 0:
+            self.epoch_bce_nuclei.append(np.mean(self.current_epoch_bce_nuclei))
+            self.epoch_bce_mito.append(np.mean(self.current_epoch_bce_mito))
+            self.epoch_dice_nuclei.append(np.mean(self.current_epoch_dice_nuclei))
+            self.epoch_dice_mito.append(np.mean(self.current_epoch_dice_mito))
+            self.epoch_total_loss.append(train_loss)
+
+            # Clear accumulators for next epoch
+            self.current_epoch_bce_nuclei = []
+            self.current_epoch_bce_mito = []
+            self.current_epoch_dice_nuclei = []
+            self.current_epoch_dice_mito = []
+
+            # Update graph
             self._update_loss_components_graph()
 
     def _update_loss_components_graph(self):
         """Update the loss components graph including total loss"""
         lines = []
 
-        if len(self.bce_nuclei_losses) > 0:
+        if len(self.epoch_bce_nuclei) > 0:
             try:
-                # Total loss (from batch_losses) - thick gray line
-                if len(self.batch_losses) > 0:
-                    total_loss_line = wxplot.PolyLine(self.batch_losses, colour='gray', width=3, legend='Total Loss')
-                    lines.append(total_loss_line)
+                # Create x-axis data (epochs)
+                epochs_x = list(range(len(self.epoch_bce_nuclei)))
+
+                # Total loss - thick gray line
+                total_data = list(zip(epochs_x, self.epoch_total_loss))
+                total_loss_line = wxplot.PolyLine(total_data, colour='gray', width=3, legend='Total Loss')
+                lines.append(total_loss_line)
 
                 # BCE losses (solid lines)
-                bce_nuclei_line = wxplot.PolyLine(self.bce_nuclei_losses, colour='red', width=2, legend='BCE Nuclei')
-                bce_mito_line = wxplot.PolyLine(self.bce_mito_losses, colour='cyan', width=2, legend='BCE Mito')
+                bce_nuclei_data = list(zip(epochs_x, self.epoch_bce_nuclei))
+                bce_mito_data = list(zip(epochs_x, self.epoch_bce_mito))
+                bce_nuclei_line = wxplot.PolyLine(bce_nuclei_data, colour='red', width=2, legend='BCE Nuclei')
+                bce_mito_line = wxplot.PolyLine(bce_mito_data, colour='cyan', width=2, legend='BCE Mito')
                 lines.append(bce_nuclei_line)
                 lines.append(bce_mito_line)
 
                 # Dice losses (dotted lines)
-                dice_nuclei_line = wxplot.PolyLine(self.dice_nuclei_losses, colour='red', width=1,
+                dice_nuclei_data = list(zip(epochs_x, self.epoch_dice_nuclei))
+                dice_mito_data = list(zip(epochs_x, self.epoch_dice_mito))
+                dice_nuclei_line = wxplot.PolyLine(dice_nuclei_data, colour='red', width=1,
                                                    legend='Dice Nuclei', style=wx.PENSTYLE_DOT)
-                dice_mito_line = wxplot.PolyLine(self.dice_mito_losses, colour='cyan', width=1,
+                dice_mito_line = wxplot.PolyLine(dice_mito_data, colour='cyan', width=1,
                                                  legend='Dice Mito', style=wx.PENSTYLE_DOT)
                 lines.append(dice_nuclei_line)
                 lines.append(dice_mito_line)
 
-                graphics = wxplot.PlotGraphics(lines, 'Loss Components', 'Batch', 'Loss')
+                graphics = wxplot.PlotGraphics(lines, 'Loss Components', 'Epoch', 'Loss')
                 self.loss_comp_canvas.Draw(graphics)
             except Exception as e:
                 print(f"ERROR drawing loss components graph: {e}")
@@ -621,6 +651,9 @@ class GUICallbacks(TrainingCallbacks):
 
     def on_epoch_end(self, epoch, train_loss, val_loss=None, metrics=None):
         self.panel.add_loss_point(epoch, train_loss, val_loss)
+
+        # Finalize loss components for this epoch
+        self.panel.finalize_epoch_loss_components(epoch, train_loss)
 
         if metrics:
             self.panel.add_metrics_point(epoch, metrics['nuclei_iou'], metrics['mito_iou'])
