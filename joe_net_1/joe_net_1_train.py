@@ -101,6 +101,7 @@ class TrainingPanel(wx.Panel):
         self.epochs = []
         self.train_losses = []
         self.val_losses = []
+        self.iou_epochs = []  # Actual epoch numbers when IoU was measured
         self.nuclei_ious = []
         self.mito_ious = []
 
@@ -273,6 +274,7 @@ class TrainingPanel(wx.Panel):
         self.epochs = []
         self.train_losses = []
         self.val_losses = []
+        self.iou_epochs = []
         self.nuclei_ious = []
         self.mito_ious = []
         self.batch_losses = []
@@ -365,17 +367,7 @@ class TrainingPanel(wx.Panel):
         self.batch_losses.append((self.batch_counter, loss))
         self.batch_counter += 1
 
-        # Debug: print first few points
-        if self.batch_counter <= 5:
-            print(f"DEBUG: Added batch loss: batch={self.batch_counter-1}, loss={loss:.4f}")
-
-        # Only keep last 500 batch points to avoid slowdown
-        if len(self.batch_losses) > 500:
-            self.batch_losses = self.batch_losses[-500:]
-
-        # Update loss graph with batch data (throttle to every 5 batches for performance)
-        if self.batch_counter % 5 == 0:
-            self._update_loss_graph()
+        # Note: batch_losses kept for potential future use, but no longer displayed
 
     def add_loss_point(self, epoch, train_loss, val_loss=None):
         """Add a loss data point (thread-safe)"""
@@ -387,8 +379,7 @@ class TrainingPanel(wx.Panel):
         if val_loss is not None:
             self.val_losses.append(val_loss)
 
-        # Update loss graph
-        self._update_loss_graph()
+        # Note: Loss graph was removed; total loss now shown in Loss Components graph
 
     def _update_loss_graph(self):
         """Update the loss graph with both batch and epoch data"""
@@ -447,17 +438,15 @@ class TrainingPanel(wx.Panel):
         wx.CallAfter(self._add_metrics_point, epoch, nuclei_iou, mito_iou)
 
     def _add_metrics_point(self, epoch, nuclei_iou, mito_iou):
+        # Store both the epoch number and the IoU values
+        self.iou_epochs.append(epoch)
         self.nuclei_ious.append(nuclei_iou)
         self.mito_ious.append(mito_iou)
 
         # Update metrics graph (shows entire training run)
         if len(self.nuclei_ious) > 0:
-            # Create x-axis for validation epochs (maps to actual epoch numbers)
-            num_vals = len(self.nuclei_ious)
-            val_epochs = list(range(len(self.epochs) - num_vals, len(self.epochs)))
-
-            nuclei_data = list(zip(val_epochs, self.nuclei_ious))
-            mito_data = list(zip(val_epochs, self.mito_ious))
+            nuclei_data = list(zip(self.iou_epochs, self.nuclei_ious))
+            mito_data = list(zip(self.iou_epochs, self.mito_ious))
 
             nuclei_line = wxplot.PolyLine(nuclei_data, colour='red', width=2, legend='Nuclei IoU')
             mito_line = wxplot.PolyLine(mito_data, colour='cyan', width=2, legend='Mito IoU')

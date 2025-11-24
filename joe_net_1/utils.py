@@ -214,9 +214,6 @@ def visualize_prediction(img, target, pred, save_path=None):
     gt_composite = composite_rgb(img_np, target_nuclei * 255, target_mito * 255)
     pred_composite = composite_rgb(img_np, pred_nuclei * 255, pred_mito * 255)
 
-    # Debug: print prediction statistics
-    print(f"Prediction stats: nuclei={pred_nuclei.sum()} pixels, mito={pred_mito.sum()} pixels")
-
     # Stack horizontally: input | ground truth | prediction
     vis = np.concatenate([img_only, gt_composite, pred_composite], axis=1)
 
