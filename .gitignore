@@ -208,3 +208,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# PyTorch training inputs and outputs
+data
+outputs
+wandb
+checkpoints
+

@@ -47,7 +47,6 @@ def load_volumes_global(mip=0):
     if volumes_loaded:
         return (volume_img, volume_nuclei, volume_mito)
 
-    print("Loading volumes...")
     volume_img, volume_nuclei, volume_mito = load_volumes(mip=mip)
     volumes_loaded = True
 
@@ -125,6 +124,14 @@ class TrainingPanel(wx.Panel):
         # Histogram data (10 bins each: 0-0.1, 0.1-0.2, ..., 0.9-1.0)
         self.nuclei_hist_bins = [0] * 10
         self.mito_hist_bins = [0] * 10
+
+        # UI update locks to prevent reentrant calls
+        self._periodic_update_in_progress = False
+        self._epoch_update_in_progress = False
+
+        # Time-based throttling for periodic updates
+        self._last_periodic_update_time = 0
+        self._periodic_update_interval = 0.5  # seconds
 
         # Create UI
         self.create_ui()
@@ -344,30 +351,106 @@ class TrainingPanel(wx.Panel):
         self.stop_button.Enable(False)
         self.status_text.SetLabel(f"Training complete! Total time: {time_str}")
 
+    def update_periodic(self, status_text, pred_probs, predictions):
+        """
+        Periodic UI updates (time-throttled, thread-safe with reentrant protection)
+
+        Updates status label, predictions, and confidence histograms.
+        Only executes if enough time has passed since last update.
+
+        Args:
+            status_text: Status text to display
+            pred_probs: Prediction probabilities for histograms
+            predictions: List of (img, target, pred) tuples for visualization
+        """
+        current_time = time.time()
+
+        # Time-based throttling
+        if (current_time - self._last_periodic_update_time) < self._periodic_update_interval:
+            return
+
+        wx.CallAfter(self._update_periodic, status_text, pred_probs, predictions, current_time)
+
+    def _update_periodic(self, status_text, pred_probs, predictions, current_time):
+        """Internal periodic update - skips if already in progress"""
+        # Reentrant protection
+        if self._periodic_update_in_progress:
+            return
+
+        try:
+            self._periodic_update_in_progress = True
+            self._last_periodic_update_time = current_time
+
+            # Update status label
+            self.status_text.SetLabel(status_text)
+
+            # Update predictions
+            if predictions is not None:
+                for i, (img, target, pred) in enumerate(predictions[:3]):
+                    if i < len(self.pred_panels):
+                        pil_img = visualize_prediction(img, target, pred)
+                        self.pred_panels[i].update_image(pil_img)
+
+            # Update confidence histograms
+            if pred_probs is not None:
+                self._update_histograms(pred_probs)
+
+        finally:
+            self._periodic_update_in_progress = False
+
+    def update_per_epoch(self, epoch, total_epochs):
+        """
+        Per-epoch UI updates (thread-safe with reentrant protection)
+
+        Updates progress bar and triggers graph redraws.
+        Called once per epoch - no throttling needed.
+
+        Args:
+            epoch: Current epoch number
+            total_epochs: Total number of epochs
+        """
+        wx.CallAfter(self._update_per_epoch, epoch, total_epochs)
+
+    def _update_per_epoch(self, epoch, total_epochs):
+        """Internal per-epoch update - skips if already in progress"""
+        # Reentrant protection
+        if self._epoch_update_in_progress:
+            return
+
+        try:
+            self._epoch_update_in_progress = True
+
+            # Update progress bar
+            progress = int((epoch / total_epochs) * 100)
+            self.progress.SetValue(progress)
+
+        finally:
+            self._epoch_update_in_progress = False
+
+    def accumulate_batch_data(self, loss, loss_components):
+        """
+        Accumulate batch data without UI update (called from training thread)
+
+        Args:
+            loss: Batch loss value
+            loss_components: Dict with BCE/Dice loss components
+        """
+        # Track batch loss
+        self.batch_losses.append((self.batch_counter, loss))
+        self.batch_counter += 1
+
+        # Accumulate loss components for epoch averaging
+        self.current_epoch_bce_nuclei.append(loss_components['bce_nuclei'])
+        self.current_epoch_bce_mito.append(loss_components['bce_mito'])
+        self.current_epoch_dice_nuclei.append(loss_components['dice_nuclei'])
+        self.current_epoch_dice_mito.append(loss_components['dice_mito'])
+
     def update_status(self, status):
         """Update status text (thread-safe)"""
         wx.CallAfter(self._update_status, status)
 
     def _update_status(self, status):
         self.status_text.SetLabel(status)
-
-    def update_progress(self, epoch, total_epochs):
-        """Update progress bar (thread-safe)"""
-        wx.CallAfter(self._update_progress, epoch, total_epochs)
-
-    def _update_progress(self, epoch, total_epochs):
-        progress = int((epoch / total_epochs) * 100)
-        self.progress.SetValue(progress)
-
-    def add_batch_loss(self, loss):
-        """Add a batch loss point for live updates (thread-safe)"""
-        wx.CallAfter(self._add_batch_loss, loss)
-
-    def _add_batch_loss(self, loss):
-        self.batch_losses.append((self.batch_counter, loss))
-        self.batch_counter += 1
-
-        # Note: batch_losses kept for potential future use, but no longer displayed
 
     def add_loss_point(self, epoch, train_loss, val_loss=None):
         """Add a loss data point (thread-safe)"""
@@ -378,60 +461,6 @@ class TrainingPanel(wx.Panel):
         self.train_losses.append(train_loss)
         if val_loss is not None:
             self.val_losses.append(val_loss)
-
-        # Note: Loss graph was removed; total loss now shown in Loss Components graph
-
-    def _update_loss_graph(self):
-        """Update the loss graph with both batch and epoch data"""
-        lines = []
-
-        # Debug first call
-        if self.batch_counter <= 10:
-            print(f"DEBUG: Updating graph, batch_losses count={len(self.batch_losses)}")
-            if len(self.batch_losses) > 0:
-                print(f"DEBUG: First point: {self.batch_losses[0]}, Last point: {self.batch_losses[-1]}")
-
-        # Plot batch losses (live updates, gray color)
-        if len(self.batch_losses) > 0:
-            try:
-                batch_line = wxplot.PolyLine(self.batch_losses, colour='gray', width=1, legend='Batch Loss')
-                lines.append(batch_line)
-                if self.batch_counter <= 10:
-                    print(f"DEBUG: Created batch line with {len(self.batch_losses)} points")
-            except Exception as e:
-                print(f"ERROR creating batch line: {e}")
-
-        # Plot epoch average losses (blue for train, red for val)
-        if len(self.epochs) > 0:
-            try:
-                train_data = list(zip(self.epochs, self.train_losses))
-                # Scale epochs to batch space for visualization
-                batches_per_epoch = self.batch_counter / max(len(self.epochs), 1)
-                train_data_scaled = [(e * batches_per_epoch, loss) for e, loss in train_data]
-                train_line = wxplot.PolyLine(train_data_scaled, colour='blue', width=2, legend='Train Loss (avg)')
-                lines.append(train_line)
-
-                # Add validation loss if we have data
-                if len(self.val_losses) > 0:
-                    val_epochs = self.epochs[-len(self.val_losses):]
-                    val_data = list(zip(val_epochs, self.val_losses))
-                    val_data_scaled = [(e * batches_per_epoch, loss) for e, loss in val_data]
-                    val_line = wxplot.PolyLine(val_data_scaled, colour='red', width=2, legend='Val Loss')
-                    lines.append(val_line)
-            except Exception as e:
-                print(f"ERROR creating epoch lines: {e}")
-
-        if lines:
-            try:
-                graphics = wxplot.PlotGraphics(lines, 'Training Loss (Live)', 'Batch', 'Loss')
-                self.loss_canvas.Draw(graphics)
-                if self.batch_counter <= 10:
-                    print(f"DEBUG: Drew graph with {len(lines)} lines")
-            except Exception as e:
-                print(f"ERROR drawing graph: {e}")
-        else:
-            if self.batch_counter <= 10:
-                print("DEBUG: No lines to draw!")
 
     def add_metrics_point(self, epoch, nuclei_iou, mito_iou):
         """Add metrics data point (thread-safe)"""
@@ -455,26 +484,15 @@ class TrainingPanel(wx.Panel):
             self.metrics_canvas.Draw(graphics)
 
     def update_predictions(self, sample_predictions):
-        """Update prediction visualizations (thread-safe)"""
+        """Update prediction visualizations at validation time (thread-safe)"""
         wx.CallAfter(self._update_predictions, sample_predictions)
 
     def _update_predictions(self, sample_predictions):
+        """Update predictions from validation samples"""
         for i, (img, target, pred) in enumerate(sample_predictions[:3]):
             if i < len(self.pred_panels):
-                # Create visualization
                 pil_img = visualize_prediction(img, target, pred)
                 self.pred_panels[i].update_image(pil_img)
-
-    def add_loss_components(self, loss_dict):
-        """Accumulate loss components during epoch (thread-safe)"""
-        wx.CallAfter(self._add_loss_components, loss_dict)
-
-    def _add_loss_components(self, loss_dict):
-        # Accumulate for averaging at epoch end
-        self.current_epoch_bce_nuclei.append(loss_dict['bce_nuclei'])
-        self.current_epoch_bce_mito.append(loss_dict['bce_mito'])
-        self.current_epoch_dice_nuclei.append(loss_dict['dice_nuclei'])
-        self.current_epoch_dice_mito.append(loss_dict['dice_mito'])
 
     def finalize_epoch_loss_components(self, epoch, train_loss):
         """Finalize loss components at epoch end (thread-safe)"""
@@ -500,44 +518,31 @@ class TrainingPanel(wx.Panel):
 
     def _update_loss_components_graph(self):
         """Update the loss components graph including total loss"""
-        lines = []
-
         if len(self.epoch_bce_nuclei) > 0:
-            try:
-                # Create x-axis data (epochs)
-                epochs_x = list(range(len(self.epoch_bce_nuclei)))
+            # Create x-axis data (epochs)
+            epochs_x = list(range(len(self.epoch_bce_nuclei)))
 
-                # Total loss - thick gray line
-                total_data = list(zip(epochs_x, self.epoch_total_loss))
-                total_loss_line = wxplot.PolyLine(total_data, colour='gray', width=3, legend='Total Loss')
-                lines.append(total_loss_line)
+            # Total loss - thick gray line
+            total_data = list(zip(epochs_x, self.epoch_total_loss))
+            total_loss_line = wxplot.PolyLine(total_data, colour='gray', width=3, legend='Total Loss')
 
-                # BCE losses (solid lines)
-                bce_nuclei_data = list(zip(epochs_x, self.epoch_bce_nuclei))
-                bce_mito_data = list(zip(epochs_x, self.epoch_bce_mito))
-                bce_nuclei_line = wxplot.PolyLine(bce_nuclei_data, colour='red', width=2, legend='BCE Nuclei')
-                bce_mito_line = wxplot.PolyLine(bce_mito_data, colour='cyan', width=2, legend='BCE Mito')
-                lines.append(bce_nuclei_line)
-                lines.append(bce_mito_line)
+            # BCE losses (solid lines)
+            bce_nuclei_data = list(zip(epochs_x, self.epoch_bce_nuclei))
+            bce_mito_data = list(zip(epochs_x, self.epoch_bce_mito))
+            bce_nuclei_line = wxplot.PolyLine(bce_nuclei_data, colour='red', width=2, legend='BCE Nuclei')
+            bce_mito_line = wxplot.PolyLine(bce_mito_data, colour='cyan', width=2, legend='BCE Mito')
 
-                # Dice losses (dotted lines)
-                dice_nuclei_data = list(zip(epochs_x, self.epoch_dice_nuclei))
-                dice_mito_data = list(zip(epochs_x, self.epoch_dice_mito))
-                dice_nuclei_line = wxplot.PolyLine(dice_nuclei_data, colour='red', width=1,
-                                                   legend='Dice Nuclei', style=wx.PENSTYLE_DOT)
-                dice_mito_line = wxplot.PolyLine(dice_mito_data, colour='cyan', width=1,
-                                                 legend='Dice Mito', style=wx.PENSTYLE_DOT)
-                lines.append(dice_nuclei_line)
-                lines.append(dice_mito_line)
+            # Dice losses (dotted lines)
+            dice_nuclei_data = list(zip(epochs_x, self.epoch_dice_nuclei))
+            dice_mito_data = list(zip(epochs_x, self.epoch_dice_mito))
+            dice_nuclei_line = wxplot.PolyLine(dice_nuclei_data, colour='red', width=1,
+                                               legend='Dice Nuclei', style=wx.PENSTYLE_DOT)
+            dice_mito_line = wxplot.PolyLine(dice_mito_data, colour='cyan', width=1,
+                                             legend='Dice Mito', style=wx.PENSTYLE_DOT)
 
-                graphics = wxplot.PlotGraphics(lines, 'Loss Components', 'Epoch', 'Loss')
-                self.loss_comp_canvas.Draw(graphics)
-            except Exception as e:
-                print(f"ERROR drawing loss components graph: {e}")
-
-    def update_histograms(self, pred_probs):
-        """Update prediction confidence histograms (thread-safe)"""
-        wx.CallAfter(self._update_histograms, pred_probs)
+            lines = [total_loss_line, bce_nuclei_line, bce_mito_line, dice_nuclei_line, dice_mito_line]
+            graphics = wxplot.PlotGraphics(lines, 'Loss Components', 'Epoch', 'Loss')
+            self.loss_comp_canvas.Draw(graphics)
 
     def _update_histograms(self, pred_probs):
         """Compute and display histograms from prediction probabilities"""
@@ -559,44 +564,32 @@ class TrainingPanel(wx.Panel):
         self.mito_hist_bins = mito_counts.tolist()
 
         # Draw nuclei histogram using PolyHistogram
-        try:
-            # Create bin edges for histogram (0.0, 0.1, 0.2, ..., 1.0)
-            bins = np.linspace(0, 1, 11)  # 11 edges for 10 bins
+        bins = np.linspace(0, 1, 11)  # 11 edges for 10 bins
 
-            # Create histogram using PolyHistogram
-            hist = wxplot.PolyHistogram(
-                np.array(self.nuclei_hist_bins),
-                bins,
-                fillcolour=wx.RED,
-                edgecolour=wx.RED,
-                edgewidth=1
-            )
+        hist = wxplot.PolyHistogram(
+            np.array(self.nuclei_hist_bins),
+            bins,
+            fillcolour=wx.RED,
+            edgecolour=wx.RED,
+            edgewidth=1
+        )
 
-            graphics = wxplot.PlotGraphics([hist], 'Nuclei Confidence', 'Probability', 'Percentage')
-            max_height = max(self.nuclei_hist_bins) if max(self.nuclei_hist_bins) > 0 else 1
-            self.nuclei_hist_canvas.Draw(graphics, xAxis=(0, 1), yAxis=(0, max_height * 1.1))
-        except Exception as e:
-            print(f"ERROR drawing nuclei histogram: {e}")
+        graphics = wxplot.PlotGraphics([hist], 'Nuclei Confidence', 'Probability', 'Percentage')
+        max_height = max(self.nuclei_hist_bins) if max(self.nuclei_hist_bins) > 0 else 1
+        self.nuclei_hist_canvas.Draw(graphics, xAxis=(0, 1), yAxis=(0, max_height * 1.1))
 
         # Draw mito histogram using PolyHistogram
-        try:
-            # Create bin edges for histogram (0.0, 0.1, 0.2, ..., 1.0)
-            bins = np.linspace(0, 1, 11)  # 11 edges for 10 bins
+        hist = wxplot.PolyHistogram(
+            np.array(self.mito_hist_bins),
+            bins,
+            fillcolour=wx.CYAN,
+            edgecolour=wx.CYAN,
+            edgewidth=1
+        )
 
-            # Create histogram using PolyHistogram
-            hist = wxplot.PolyHistogram(
-                np.array(self.mito_hist_bins),
-                bins,
-                fillcolour=wx.CYAN,
-                edgecolour=wx.CYAN,
-                edgewidth=1
-            )
-
-            graphics = wxplot.PlotGraphics([hist], 'Mito Confidence', 'Probability', 'Percentage')
-            max_height = max(self.mito_hist_bins) if max(self.mito_hist_bins) > 0 else 1
-            self.mito_hist_canvas.Draw(graphics, xAxis=(0, 1), yAxis=(0, max_height * 1.1))
-        except Exception as e:
-            print(f"ERROR drawing mito histogram: {e}")
+        graphics = wxplot.PlotGraphics([hist], 'Mito Confidence', 'Probability', 'Percentage')
+        max_height = max(self.mito_hist_bins) if max(self.mito_hist_bins) > 0 else 1
+        self.mito_hist_canvas.Draw(graphics, xAxis=(0, 1), yAxis=(0, max_height * 1.1))
 
 
 class GUICallbacks(TrainingCallbacks):
@@ -611,34 +604,34 @@ class GUICallbacks(TrainingCallbacks):
         self.panel.update_status(f"Training started: {model_params:,} parameters, {total_epochs} epochs")
 
     def on_epoch_start(self, epoch, total_epochs):
+        # Just update status at epoch start
         self.panel.update_status(f"Epoch {epoch + 1}/{total_epochs}")
-        self.panel.update_progress(epoch, total_epochs)
 
     def on_batch_end(self, epoch, batch_idx, total_batches, loss, loss_components=None, pred_probs=None):
-        # Add batch loss to live graph
-        self.panel.add_batch_loss(loss)
-
-        # Add loss components if provided
+        # Always accumulate batch data (needed for epoch averaging)
         if loss_components:
-            self.panel.add_loss_components(loss_components)
+            self.panel.accumulate_batch_data(loss, loss_components)
 
-        # Update histograms if predictions provided
-        if pred_probs is not None:
-            self.panel.update_histograms(pred_probs)
+        # Check if periodic update will actually happen (to avoid wasted computation)
+        current_time = time.time()
+        if (current_time - self.panel._last_periodic_update_time) < self.panel._periodic_update_interval:
+            return  # Skip expensive UI updates, throttled
 
-        # Update status every n batches
-        if batch_idx % 1 == 0:
-            elapsed_seconds = time.time() - self.panel.training_start_time
-            elapsed_time = ':'.join([str(int(elapsed_seconds/60/60 % 60)), str(int(elapsed_seconds/60 % 60)), str(int(elapsed_seconds%60))])
-            self.panel.update_status(
-              f"Epoch {epoch + 1}, Batch {batch_idx}/{total_batches}, Loss: {loss:.4f}, Time: {elapsed_time}"
-            )
+        # Prepare status text
+        elapsed_seconds = time.time() - self.panel.training_start_time
+        elapsed_time = ':'.join([str(int(elapsed_seconds/60/60 % 60)),
+                                 str(int(elapsed_seconds/60 % 60)),
+                                 str(int(elapsed_seconds%60))])
+        status_text = f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{total_batches}, Loss: {loss:.4f}, Time: {elapsed_time}"
 
-        # Update predictions every m batches (not just at validation)
-        if batch_idx % 1 == 0:
-            self._update_live_predictions()
+        # Generate live predictions (expensive - only when update will happen)
+        predictions = self._get_live_predictions()
+
+        # Periodic update (will accept since we already checked timing)
+        self.panel.update_periodic(status_text, pred_probs, predictions)
 
     def on_epoch_end(self, epoch, train_loss, val_loss=None, metrics=None):
+        # Add epoch data points
         self.panel.add_loss_point(epoch, train_loss, val_loss)
 
         # Finalize loss components for this epoch
@@ -646,6 +639,10 @@ class GUICallbacks(TrainingCallbacks):
 
         if metrics:
             self.panel.add_metrics_point(epoch, metrics['nuclei_iou'], metrics['mito_iou'])
+
+        # Per-epoch UI update
+        total_epochs = self.panel.trainer.config.num_epochs
+        self.panel.update_per_epoch(epoch + 1, total_epochs)
 
     def on_validation_end(self, epoch, val_loss, metrics, sample_predictions):
         # Update predictions
@@ -658,18 +655,23 @@ class GUICallbacks(TrainingCallbacks):
 
     def on_training_end(self, final_epoch, best_val_loss):
         self.panel.update_status(f"Training complete! Best val loss: {best_val_loss:.4f}")
-        self.panel.update_progress(final_epoch, final_epoch)
+        # Final progress bar update
+        wx.CallAfter(lambda: self.panel.progress.SetValue(100))
 
-    def _update_live_predictions(self):
-        """Generate predictions on validation samples and update display"""
+    def _get_live_predictions(self):
+        """
+        Generate predictions on validation samples
+
+        Returns:
+            List of (img, target, pred) tuples, or None if not available
+        """
         # Get trainer from panel
         trainer = self.panel.trainer
         if trainer is None:
-            return
+            return None
 
         # Get or cache fixed samples (same 3 every time)
         if self.fixed_samples is None:
-            print("Caching 3 fixed validation samples for consistent visualization...")
             self.fixed_samples = []
             for i in range(3):
                 img, target = trainer.val_dataset[i]
@@ -687,8 +689,7 @@ class GUICallbacks(TrainingCallbacks):
                 # Remove batch dimension and move to CPU
                 predictions.append((img, target, pred[0].cpu()))
 
-        # Update GUI
-        self.panel.update_predictions(predictions)
+        return predictions
 
 
 class MainFrame(wx.Frame):
@@ -727,3 +728,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
