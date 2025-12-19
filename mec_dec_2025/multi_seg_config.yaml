@@ -1,10 +1,13 @@
-# Configuration for mitochondria segmentation training
+# Configuration for multi-class semantic segmentation training
 
 # Model
 pretrained_checkpoint: "trained_models/lejepa_128d/checkpoint_epoch0800_valloss0.1142.pt"
 freeze_encoder: true      # Start with frozen encoder
+num_classes: 12           # Fine-grained classes
+num_coarse_groups: 5      # Coarse hierarchical groups
+
 # Set resume_checkpoint to a checkpoint path, or null to start from scratch
-resume_checkpoint: null
+resume_checkpoint: "checkpoints_multi_seg/best_model_miou0.2656.pt"
 
 # Data
 patch_size: 128           # Size of training patches
@@ -13,16 +16,13 @@ val_samples: 500          # Number of validation samples per epoch
 
 # Training
 bs: 32                    # Batch size
-epochs: 501               # Number of training epochs
-lr: 0.001                 # Learning rate
+epochs: 901               # Number of training epochs
+lr: 0.001                 # Learning rate (1e-3)
 
 # Loss
-# Class weights for BCE loss (computed as inverse frequency)
-# Mitochondria ~7.78%, background ~92.22%
-# weights: [1.0, 11.86] for [background, mitochondria]
-pos_weight: 11.86         # Weight for positive class (mitochondria)
+lambda_coarse: 0.2        # Weight for coarse loss (fine loss weight is implicitly 1.0)
 
 # Evaluation
 eval_every: 5             # Evaluate every N epochs
 save_every: 50            # Save checkpoint every N epochs
-visualize_every: 25       # Save visualization every N epochs
+visualize_every: 50       # Save visualization every N epochs
