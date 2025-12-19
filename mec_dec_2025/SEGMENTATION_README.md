@@ -4,9 +4,9 @@ This folder contains a U-Net architecture for binary mitochondria segmentation u
 
 ## Files
 
-- `unet_architecture.py` - U-Net model with ConvNeXt encoder and decoder
+- `mito_unet_arch.py` - U-Net model with ConvNeXt encoder and decoder
 - `mito_seg_train.py` - Training script for mitochondria segmentation
-- `seg_config.yaml` - Configuration for segmentation training
+- `mito_seg_config.yaml` - Configuration for segmentation training
 - `check_seg_data.py` - Script to verify segmentation data loading
 
 ## Architecture
@@ -42,7 +42,7 @@ This folder contains a U-Net architecture for binary mitochondria segmentation u
 python mito_seg_train.py
 ```
 
-### Configuration (seg_config.yaml):
+### Configuration (mito_seg_config.yaml):
 - `pretrained_checkpoint`: Path to LeJEPA checkpoint
 - `freeze_encoder`: Whether to freeze encoder (start with true)
 - `patch_size`: 128×128 patches
@@ -66,7 +66,7 @@ python mito_seg_train.py
 
 After initial training with frozen encoder, you can fine-tune:
 
-1. Update `seg_config.yaml`: Set `freeze_encoder: false`
+1. Update `mito_seg_config.yaml`: Set `freeze_encoder: false`
 2. Reduce learning rate: `lr: 0.0001` (or use differential learning rates)
 3. Continue training from best checkpoint
 

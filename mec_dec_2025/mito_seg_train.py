@@ -17,7 +17,7 @@ from cloudvolume import CloudVolume
 import matplotlib.pyplot as plt
 import matplotlib
 
-from unet_architecture import ConvNeXtUNet
+from mito_unet_arch import ConvNeXtUNet
 
 
 class MitochondriaDataset(Dataset):
@@ -227,7 +227,7 @@ def save_predictions(dataloader, model, epoch, output_dir="seg_predictions", num
             break  # Only need one batch
 
 
-@hydra.main(version_base=None, config_path=".", config_name="seg_config")
+@hydra.main(version_base=None, config_path=".", config_name="mito_seg_config")
 def main(cfg: DictConfig):
     # Initialize WandB (will be updated if resuming)
     wandb_run_id = None
