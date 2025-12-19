@@ -214,4 +214,10 @@ data
 outputs
 wandb
 checkpoints
+checkpoints_seg
+*.pt
+*.pth
+*.ckpt
+seg_predictions
+seg_data_check.png
 
