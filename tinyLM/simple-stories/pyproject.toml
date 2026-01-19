@@ -1,0 +1,86 @@
+[project]
+name = "simple_stories_train"
+version = "0.0.1"
+description = "Training of small LM models for SimpleStories"
+requires-python = ">=3.11"
+readme = "README.md"
+dependencies = [
+    "torch<2.6.0",
+    "torchvision",
+    "pydantic",
+    "wandb",
+    "fire",
+    "tqdm",
+    "pytest",
+    "ipykernel",
+    "jaxtyping",
+    "tiktoken",
+    "transformers",
+    "datasets",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "pyright",
+    "pre-commit",
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+fix = true
+ignore = [
+    "F722" # Incompatible with jaxtyping
+]
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
+
+[tool.ruff.format]
+# Enable reformatting of code snippets in docstrings.
+docstring-code-format = true
+
+[tool.ruff.isort]
+known-third-party = ["wandb"]
+
+[tool.pyright]
+include = ["simple_stories_train", "tests"]
+
+strictListInference = true
+strictDictionaryInference = true
+strictSetInference = true
+reportFunctionMemberAccess = true
+reportUnknownParameterType = true
+reportIncompatibleMethodOverride = true
+reportIncompatibleVariableOverride = true
+reportInconsistentConstructorType = true
+reportOverlappingOverload = true
+reportConstantRedefinition = true
+reportImportCycles = true
+reportPropertyTypeMismatch = true
+reportMissingTypeArgument = true
+reportUnnecessaryCast = true
+reportUnnecessaryComparison = true
+reportUnnecessaryContains = true
+reportUnusedExpression = true
+reportMatchNotExhaustive = true
+reportShadowedImports = true
+reportPrivateImportUsage = false

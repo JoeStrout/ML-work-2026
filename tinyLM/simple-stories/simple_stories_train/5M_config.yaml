@@ -1,0 +1,33 @@
+wandb_project: TinyLMs
+train_dataset_config:
+  name: lennart-finke/SimpleStories
+  is_tokenized: false
+  tokenizer_file_path: simple_stories_train/tokenizer/simplestories-4096.json
+  split: train
+  streaming: false
+  n_ctx: 512
+  seed: 0
+  column_name: story
+val_dataset_config:
+  name: lennart-finke/SimpleStories
+  is_tokenized: false
+  tokenizer_file_path: simple_stories_train/tokenizer/simplestories-4096.json
+  split: test
+  streaming: false
+  n_ctx: 512
+  seed: 0
+  column_name: story
+model_name: 5M
+# 1 GPU - smaller batch for 5M model
+batch_size: 64
+total_batch_size: 32768
+num_iterations: 30000
+warmup_iters: 300
+learning_rate: 3e-4
+learning_rate_decay_frac: 0.1
+weight_decay: 0.1
+grad_clip: 1.0
+val_loss_every: 100
+val_max_steps: 20
+sample_every: 500
+intermediate_checkpoints: false

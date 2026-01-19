@@ -1,0 +1,43 @@
+# Experiment 002: Tool-Augmented Addition
+#
+# Purpose: Test whether ES can discover effective use of embedded
+# addition tool in neural network.
+
+experiment:
+  name: "tool_augmented_addition"
+  description: "Tool-augmented MLP for multi-digit addition using ES"
+
+# Task configuration
+task:
+  type: "addition"
+  num_digits: 4
+  train_samples: 10000
+  test_samples: 1000
+  extrapolation_digits: 5
+
+# Network architecture
+network:
+  type: "ToolAugmentedMLP"
+  hidden_dim: 64
+  num_hidden_layers: 2
+
+# Evolution strategy
+evolution:
+  algorithm: "OpenAI-ES"
+  population_size: 100
+  sigma: 0.1
+  learning_rate: 0.001
+  weight_decay: 0.01
+  generations: 1000
+
+# Training
+training:
+  batch_size: 128
+  eval_frequency: 10
+  seed: 42
+
+# Logging
+logging:
+  save_checkpoints: true
+  checkpoint_frequency: 50
+  track_gate_activation: true  # Monitor tool usage

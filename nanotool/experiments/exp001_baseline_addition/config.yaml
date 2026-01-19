@@ -1,0 +1,42 @@
+# Experiment 001: Baseline Addition (No Tool)
+#
+# Purpose: Establish baseline performance of MLP trained via ES
+# on multi-digit addition WITHOUT tool augmentation.
+
+experiment:
+  name: "baseline_addition"
+  description: "MLP baseline for multi-digit addition using ES"
+
+# Task configuration
+task:
+  type: "addition"
+  num_digits: 4           # N-digit addition
+  train_samples: 10000    # Training set size
+  test_samples: 1000      # Test set size
+  extrapolation_digits: 5 # Test generalization to longer numbers
+
+# Network architecture
+network:
+  type: "SimpleMLP"
+  hidden_dims: [64, 64]
+  activation: "relu"
+
+# Evolution strategy
+evolution:
+  algorithm: "OpenAI-ES"
+  population_size: 100
+  sigma: 0.1              # Larger sigma for exploration
+  learning_rate: 0.001    # Smaller learning rate for stability
+  weight_decay: 0.01      # L2 regularization
+  generations: 1000
+
+# Training
+training:
+  batch_size: 128
+  eval_frequency: 10      # Evaluate every N generations
+  seed: 42
+
+# Logging
+logging:
+  save_checkpoints: true
+  checkpoint_frequency: 50

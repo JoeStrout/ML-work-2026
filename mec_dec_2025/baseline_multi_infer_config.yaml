@@ -1,0 +1,32 @@
+# Configuration for baseline multi-class semantic segmentation inference
+
+# Model
+checkpoint: "checkpoints_baseline_multi/checkpoint_epoch1500_miou0.3031.pt"
+num_classes: 12
+num_coarse_groups: 5
+
+# Input data (same as training)
+input_cv_path: "gs://hammerschmith-mec-central/img-cutouts/cutout0-45nm/"
+input_mip: 0
+
+# Output data
+output_cv_path: "gs://joe_exp/mec_results/baseline_multiseg"
+output_chunk_size: [192, 192, 4]  # X, Y, Z
+
+# Volume range to process (in CloudVolume coordinates)
+x_start: 293314
+x_end: 295106
+y_start: 255978
+y_end: 257770
+z_start: 1128
+z_end: 1144
+
+# Inference parameters
+patch_size: 128        # Input patch size
+trim_size: 16          # Pixels to trim from each edge
+stride: 96             # Stride for sliding window (patch_size - 2*trim_size)
+batch_size: 32         # Number of patches to process in parallel
+
+# Output options
+save_fine: true        # Save argmax predictions (0-11)
+save_coarse: false     # Future: save coarse group predictions (0-4)

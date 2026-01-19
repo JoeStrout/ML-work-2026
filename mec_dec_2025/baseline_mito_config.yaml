@@ -1,0 +1,25 @@
+# Configuration for baseline mitochondria segmentation (no pre-training)
+
+# Model - no pretrained checkpoint for baseline
+resume_checkpoint: null
+
+# Data
+patch_size: 128           # Size of training patches
+train_samples: 5000       # Number of training samples per epoch
+val_samples: 500          # Number of validation samples per epoch
+
+# Training
+bs: 32                    # Batch size
+epochs: 1001              # Number of training epochs (2x LeJEPA version for fair comparison)
+lr: 0.001                 # Learning rate
+
+# Loss
+# Class weights for BCE loss (computed as inverse frequency)
+# Mitochondria ~7.78%, background ~92.22%
+# weights: [1.0, 11.86] for [background, mitochondria]
+pos_weight: 11.86         # Weight for positive class (mitochondria)
+
+# Evaluation
+eval_every: 5             # Evaluate every N epochs
+save_every: 50            # Save checkpoint every N epochs
+visualize_every: 50       # Save visualization every N epochs

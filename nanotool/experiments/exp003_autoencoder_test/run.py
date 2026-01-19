@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""
+Experiment 003: Autoencoder Test
+
+Can ES learn a simple autoencoder (X → hidden → X)?
+
+This is a diagnostic test. If ES cannot learn this, the tool pathway
+in our main architecture has no hope of working.
+"""
+
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+from pathlib import Path
+import time
+
+from src.evolution.es import EvolutionStrategy, flatten_params, unflatten_params
+from src.encodings.numbers import DigitEncoding
+
+
+class SimpleAutoencoder(nn.Module):
+    """Simple MLP autoencoder."""
+
+    def __init__(self, input_dim: int, hidden_dim: int):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(hidden_dim, input_dim),
+        )
+
+    def forward(self, x):
+        h = self.encoder(x)
+        return self.decoder(h)
+
+
+def generate_batch(batch_size: int, num_digits: int, device: str = 'cpu'):
+    """Generate batch of one-hot encoded numbers."""
+    max_val = 10 ** num_digits - 1
+    numbers = torch.randint(0, max_val + 1, (batch_size,))
+
+    encoding = DigitEncoding(num_digits)
+    x = encoding.encode_batch(numbers).to(device)
+
+    return x, numbers
+
+
+def compute_accuracy(model, num_digits: int, num_samples: int = 1000, device: str = 'cpu'):
+    """Compute reconstruction accuracy."""
+    model.eval()
+    encoding = DigitEncoding(num_digits)
+
+    x, numbers = generate_batch(num_samples, num_digits, device)
+
+    with torch.no_grad():
+        x_reconstructed = model(x)
+
+        # Decode reconstructions
+        reconstructed_numbers = encoding.decode_batch(x_reconstructed)
+
+        # Exact match accuracy
+        correct = (reconstructed_numbers == numbers.to(device)).float()
+        accuracy = correct.mean().item()
+
+        # Per-digit accuracy
+        x_digits = x.view(-1, num_digits, 10).argmax(dim=2)
+        x_recon_digits = x_reconstructed.view(-1, num_digits, 10).argmax(dim=2)
+        digit_accuracy = (x_digits == x_recon_digits).float().mean().item()
+
+    return accuracy, digit_accuracy
+
+
+def main():
+    print("=" * 60)
+    print("Experiment 003: Autoencoder Test")
+    print("Can ES learn X → hidden → X?")
+    print("=" * 60)
+
+    # Configuration
+    num_digits = 4
+    hidden_dim = 64  # Same as in tool-augmented model
+    batch_size = 256
+    population_size = 100
+    sigma = 0.1
+    learning_rate = 0.001
+    weight_decay = 0.01
+    max_generations = 10000
+    eval_frequency = 100
+    target_accuracy = 0.99  # Early stopping threshold
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"\nDevice: {device}")
+
+    # Input dimension: num_digits * 10 (one-hot per digit)
+    input_dim = num_digits * 10
+    print(f"Input dimension: {input_dim}")
+    print(f"Hidden dimension: {hidden_dim}")
+
+    # Create model
+    model = SimpleAutoencoder(input_dim, hidden_dim).to(device)
+    num_params = sum(p.numel() for p in model.parameters())
+    print(f"Total parameters: {num_params:,}")
+
+    # Initialize ES
+    params = flatten_params(model)
+    es = EvolutionStrategy(
+        num_params=len(params),
+        sigma=sigma,
+        learning_rate=learning_rate,
+        population_size=population_size,
+        weight_decay=weight_decay,
+        seed=42
+    )
+    es.set_params(params)
+
+    print(f"\nTraining for up to {max_generations} generations")
+    print(f"Early stopping at {target_accuracy*100:.0f}% accuracy")
+    print("-" * 60)
+
+    start_time = time.time()
+    history = {'generation': [], 'accuracy': [], 'digit_accuracy': [], 'fitness': []}
+
+    for gen in range(max_generations):
+        # Generate batch for this generation
+        x, _ = generate_batch(batch_size, num_digits, device)
+
+        # Get perturbations
+        epsilon, population = es.ask()
+
+        # Evaluate each member
+        fitness = np.zeros(population_size)
+        for i in range(population_size):
+            unflatten_params(model, population[i])
+            model.eval()
+
+            with torch.no_grad():
+                x_recon = model(x)
+                # MSE loss (negative for fitness)
+                loss = F.mse_loss(x_recon, x).item()
+
+            fitness[i] = -loss
+
+        # Update ES
+        mean_fitness = es.tell(epsilon, fitness)
+
+        # Load best params
+        unflatten_params(model, es.get_params())
+
+        # Periodic evaluation
+        if gen % eval_frequency == 0 or gen == max_generations - 1:
+            accuracy, digit_accuracy = compute_accuracy(model, num_digits, 2000, device)
+
+            elapsed = time.time() - start_time
+            print(
+                f"Gen {gen:5d} | "
+                f"fitness={mean_fitness:.6f} | "
+                f"acc={accuracy:.4f} | "
+                f"digit_acc={digit_accuracy:.4f} | "
+                f"time={elapsed:.1f}s"
+            )
+
+            history['generation'].append(gen)
+            history['accuracy'].append(accuracy)
+            history['digit_accuracy'].append(digit_accuracy)
+            history['fitness'].append(mean_fitness)
+
+            # Early stopping
+            if accuracy >= target_accuracy:
+                print(f"\nReached target accuracy {target_accuracy*100:.0f}%!")
+                break
+
+    # Final evaluation
+    print("\n" + "=" * 60)
+    print("Final Evaluation")
+    print("=" * 60)
+
+    final_acc, final_digit_acc = compute_accuracy(model, num_digits, 5000, device)
+    print(f"Accuracy (exact match): {final_acc:.4f}")
+    print(f"Digit accuracy: {final_digit_acc:.4f}")
+
+    total_time = time.time() - start_time
+    print(f"Total time: {total_time:.1f}s")
+
+    # Save results
+    results_dir = Path(__file__).parent / 'results'
+    results_dir.mkdir(exist_ok=True)
+
+    np.save(results_dir / 'history.npy', history)
+    np.save(results_dir / 'final_params.npy', es.get_params())
+
+    # Summary
+    print("\n" + "=" * 60)
+    print("Summary")
+    print("=" * 60)
+    if final_acc >= target_accuracy:
+        print("SUCCESS: ES can learn the autoencoder task.")
+    elif final_digit_acc > 0.9:
+        print("PARTIAL: High digit accuracy but not perfect reconstruction.")
+    else:
+        print("FAILURE: ES struggled with the autoencoder task.")
+
+    print(f"\nResults saved to {results_dir}")
+
+
+if __name__ == '__main__':
+    main()

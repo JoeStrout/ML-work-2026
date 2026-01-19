@@ -1,13 +1,9 @@
-# Configuration for multi-class semantic segmentation training
+# Configuration for baseline multi-class semantic segmentation (no pre-training)
 
-# Model
-pretrained_checkpoint: "trained_models/lejepa_128d/checkpoint_epoch0800_valloss0.1142.pt"
-freeze_encoder: true      # Start with frozen encoder
-num_classes: 12           # Fine-grained classes
-num_coarse_groups: 5      # Coarse hierarchical groups
-
-# Set resume_checkpoint to a checkpoint path, or null to start from scratch
-resume_checkpoint: "checkpoints_multi_seg/checkpoint_epoch1400_miou0.2981.pt"
+# Model - no pretrained checkpoint for baseline
+num_classes: 12
+num_coarse_groups: 5
+resume_checkpoint: null
 
 # Data
 patch_size: 128           # Size of training patches
@@ -16,7 +12,7 @@ val_samples: 500          # Number of validation samples per epoch
 
 # Training
 bs: 32                    # Batch size
-epochs: 501               # Number of training epochs
+epochs: 1501              # Number of training epochs (match LeJEPA version)
 lr: 0.001                 # Learning rate
 
 # Loss
