@@ -1,0 +1,36 @@
+# Dense SSL Configuration
+
+# Model
+K: 50                          # Number of output classes (soft clusters)
+encoder_backbone: convnext_small
+predictor_channels: 128
+border_trim: 32                # Pixels to trim from encoder output borders
+
+# Data
+data_path: gs://hammerschmith-mec-central/img-cutouts/cutout0-45nm/
+patch_size: 256                # XY patch size
+num_samples: 10000             # Samples per epoch
+num_workers: 4
+
+# Training
+bs: 16                         # Batch size (reduce if OOM)
+lr: 1e-4                       # Learning rate
+epochs: 100
+weight_decay: 1e-4
+seed: 42
+
+# Regularization (DiversityReg)
+min_classes: 8                 # Target minimum effective classes (H* = log(min_classes))
+alpha: 1.0                     # Weight for marginal entropy (anti-collapse)
+beta: 0.1                      # Weight for conditional entropy (sharpness)
+gamma: 1.0                     # Weight for cross-sample variance (anti-positional-hack)
+delta: 1.0                     # Weight for geometric equivariance loss
+
+# EMA target encoder
+ema_tau: 0.996                 # EMA momentum (higher = slower target update)
+
+# Visualization
+viz_samples: 4                 # Number of samples to visualize every 10 epochs
+
+# Wandb
+project: DenseSSL_EM
