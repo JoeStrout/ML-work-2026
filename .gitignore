@@ -222,6 +222,7 @@ seg_predictions
 seg_data_check.png
 *_predictions/
 view_samples/
+degrade_tests
 
 # Experiment results (regeneratable)
 **/experiments/*/results/
