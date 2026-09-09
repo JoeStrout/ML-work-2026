@@ -1,0 +1,9 @@
+# Trained model weights — regenerate with train.py / az_train.py
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# Byte-compiled
+__pycache__/
+*.py[cod]
