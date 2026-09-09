@@ -69,6 +69,26 @@ set `temperature = 0.0` in `connect4/config.py`. The `--resume` flag drops the
 default `eps_start` from 1.0 to 0.3 for the same reason it was added — so
 pre-trained weights aren't washed out by exploration.
 
+## Export for MiniScript
+
+`export_msmx.py` writes the trained AlphaZero net to the Matrix blob format
+used by raylib-miniscript, for inference outside PyTorch:
+
+```bash
+python export_msmx.py                       # -> ../../raylib-miniscript/assets/az_c4.msmx
+```
+
+It folds every BatchNorm into the convolution before it (all convs were
+trained with `bias=False`) and pre-arranges the conv weights for im2col, so
+the MiniScript side is a plain sequence of matrix products. It also writes
+`az_c4_ref.json` -- a handful of positions with the logits and value PyTorch
+produced for them -- and fails loudly if its own folded/reshaped weights do
+not reproduce the PyTorch forward pass.
+
+The player lives in the raylib-miniscript repo (`assets/connect4.ms`, with
+`assets/lib/AZNet.ms`, `C4.ms`, and `MCTS.ms`); `assets/aznet_test.ms` checks
+the ported forward pass against `az_c4_ref.json`.
+
 ## Evaluate
 
 ```bash
