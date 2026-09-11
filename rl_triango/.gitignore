@@ -1,0 +1,9 @@
+# Trained model weights — regenerate with the training scripts
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+
+# Byte-compiled
+__pycache__/
+*.py[cod]
